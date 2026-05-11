@@ -5,6 +5,7 @@ let _contentSyncQueue: Queue | null = null;
 let _reindexQueue: Queue | null = null;
 let _emailQueue: Queue | null = null;
 let _webhookQueue: Queue | null = null;
+let _aclSyncQueue: Queue | null = null;
 
 export function getContentSyncQueue(): Queue {
   if (!_contentSyncQueue) {
@@ -44,4 +45,18 @@ export function getWebhookQueue(): Queue {
     });
   }
   return _webhookQueue;
+}
+
+export function getAclSyncQueue(): Queue {
+  if (!_aclSyncQueue) {
+    _aclSyncQueue = new Queue("acl-sync", {
+      connection: redisConnection,
+      // 4 attempts with backoff covers transient DB hiccups during the
+      // user upsert. Magento itself retries up to 5 times for 5xx, so the
+      // outer retry budget is roughly 4 × 5 = 20 attempts before manual
+      // intervention is needed.
+      defaultJobOptions: { attempts: 4, backoff: { type: "exponential", delay: 5000 } },
+    });
+  }
+  return _aclSyncQueue;
 }

@@ -4,6 +4,7 @@ import { processContentSync } from "./jobs/content-sync";
 import { processReindex } from "./jobs/reindex";
 import { processEmail } from "./jobs/email-notify";
 import { processWebhookDeliver } from "./jobs/webhook-deliver";
+import { processAclSync } from "./jobs/acl-sync";
 
 console.log("Starting Nexus worker...");
 
@@ -27,7 +28,21 @@ const webhookWorker = new Worker("webhook", processWebhookDeliver, {
   concurrency: 3,
 });
 
-const workers = [contentSyncWorker, reindexWorker, emailWorker, webhookWorker];
+// concurrency: 1 — events for the same user can arrive in close succession
+// (partner.flag_changed + license.granted), and serialising avoids row-level
+// write races on the User row.
+const aclSyncWorker = new Worker("acl-sync", processAclSync, {
+  connection,
+  concurrency: 1,
+});
+
+const workers = [
+  contentSyncWorker,
+  reindexWorker,
+  emailWorker,
+  webhookWorker,
+  aclSyncWorker,
+];
 
 for (const worker of workers) {
   worker.on("completed", (job) => {

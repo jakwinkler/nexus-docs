@@ -260,6 +260,22 @@ model Idea {
   @@map("ideas")
 }
 
+// ─── Webhook Events (idempotency) ───────────────────
+// Tracks event_id of incoming webhooks so we can dedup retries.
+// Cleanup older than 30 days via a periodic job.
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique  // sender-provided event_id (UUID v4)
+  source      String            // "magento" | "gitlab" | ...
+  event       String            // event name, e.g. "license.granted"
+  receivedAt  DateTime @default(now())
+  processedAt DateTime?
+
+  @@index([source, receivedAt])
+  @@map("webhook_events")
+}
+
 // ─── Feedback ────────────────────────────────────────
 
 model Feedback {
