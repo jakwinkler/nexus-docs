@@ -1,0 +1,45 @@
+services:
+  app:
+    build:
+      target: production
+    # !override replaces the base ports list instead of merging — without it
+    # docker compose would expose BOTH 3333 (from base) and APP_PORT (from
+    # this override) publicly. APP_PORT defaults to 3333 for local prod
+    # testing; production server sets APP_PORT=3100 in .env (3000 is taken
+    # by grafana on that host).
+    ports: !override
+      - "${APP_PORT:-3333}:3000"
+    volumes:
+      - ./content:/app/content:ro
+    # host.docker.internal lets the container reach the host's Postfix
+    # (bound on 172.17.0.1:25) for outbound mail. host-gateway is the
+    # docker-bridge IP from the container's perspective.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_ENV: production
+      # AUTH_TRUST_HOST lets Auth.js derive the canonical URL from the
+      # request's Host header — works for both local prod testing
+      # (localhost:3333) and the live host (docs.example.com). Don't
+      # hardcode AUTH_URL here: it overrides NEXTAUTH_URL in production
+      # and breaks OAuth callback URLs.
+      AUTH_TRUST_HOST: "true"
+
+  worker:
+    # Worker stays on the development image because it executes TS directly
+    # via tsx, which needs src/ and tsconfig.json (not present in the
+    # standalone production target). NODE_ENV=production still flips runtime
+    # behavior (logging, caching, etc.).
+    build:
+      target: development
+    command: ["npx", "tsx", "worker/index.ts"]
+    volumes:
+      - ./content:/app/content
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_ENV: production
+
+  search:
+    environment:
+      MEILI_ENV: production

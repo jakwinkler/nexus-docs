@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type Check (Build)
+        run: npx next build
+        env:
+          AUTH_SECRET: ci-secret-not-real
+          NEXT_PUBLIC_SITE_URL: https://docs.example.com
+          MEILISEARCH_KEY: ci-placeholder
+
+  validate-content:
+    name: Validate Content
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Validate Frontmatter
+        run: |
+          if [ -d "content" ] && [ -n "$(ls -A content)" ]; then
+            npx tsx scripts/validate-content.ts
+          else
+            echo "No content directory found — skipping validation"
+          fi
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck, validate-content]
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build \
+            --target production \
+            --build-arg AUTH_SECRET=build-secret \
+            -t nexus-docs:${{ github.sha }} \
+            .

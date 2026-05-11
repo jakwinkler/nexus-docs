@@ -1,0 +1,278 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Tiers ───────────────────────────────────────────
+// Flexible tier system — add as many as you need.
+// rank: higher = more access. visibility: how locked content appears.
+
+enum TierVisibility {
+  public     // shown normally, accessible to all
+  protected  // shown with lock icon, "Request Access" prompt
+  private    // completely hidden from nav/search/sitemap
+}
+
+model Tier {
+  id          String         @id @default(cuid())
+  name        String         @unique  // e.g. "public", "client", "gold_partner"
+  label       String                  // e.g. "Gold Partner" (display name)
+  rank        Int            @unique  // 0=public, 10=client, 20=partner, etc.
+  visibility  TierVisibility @default(protected) // how content at this tier appears to unauthorized users
+  description String?                 // "Access to roadmaps and internal tools"
+  color       String?                 // hex color for badges, e.g. "#f59e0b"
+  createdAt   DateTime       @default(now())
+
+  @@index([rank])
+  @@map("tiers")
+}
+
+// ─── Auth ────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  passwordHash  String?
+  tier          String    @default("public")  // references Tier.name
+  magentoId     String?   @unique
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts       Account[]
+  sessions       Session[]
+  permissions    UserPermission[]
+  accessRequests AccessRequest[]  @relation("requester")
+  reviewedRequests AccessRequest[] @relation("reviewer")
+  auditLogs      AuditLog[]
+  feedback       Feedback[]
+  ideas          Idea[]
+
+  @@index([tier])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Permissions ─────────────────────────────────────
+
+model UserPermission {
+  id          String   @id @default(cuid())
+  userId      String
+  extension   String
+  grantedAt   DateTime @default(now())
+  grantedBy   String?
+  expiresAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, extension])
+  @@index([extension])
+  @@map("user_permissions")
+}
+
+// ─── Access Requests ─────────────────────────────────
+
+enum AccessRequestStatus {
+  pending
+  approved
+  denied
+}
+
+model AccessRequest {
+  id            String              @id @default(cuid())
+  requesterId   String
+  pagePath      String
+  tierRequested String              // references Tier.name
+  message       String?
+  status        AccessRequestStatus @default(pending)
+  reviewerId    String?
+  reviewNote    String?
+  createdAt     DateTime            @default(now())
+  reviewedAt    DateTime?
+
+  requester User  @relation("requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  reviewer  User? @relation("reviewer", fields: [reviewerId], references: [id])
+
+  @@index([status])
+  @@index([requesterId])
+  @@map("access_requests")
+}
+
+// ─── Audit Log ───────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  event     String
+  userId    String?
+  data      Json
+  ip        String?
+  timestamp DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([event])
+  @@index([userId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+// ─── Content History ─────────────────────────────────
+
+model ContentRevision {
+  id        String   @id @default(cuid())
+  filePath  String
+  gitSha    String
+  author    String
+  message   String
+  diff      String?
+  createdAt DateTime @default(now())
+
+  @@index([filePath])
+  @@index([gitSha])
+  @@map("content_revisions")
+}
+
+// ─── Invitations ────────────────────────────────────
+
+model Invitation {
+  id          String    @id @default(cuid())
+  email       String
+  token       String    @unique
+  extensions  String[]
+  tier        String    @default("client")  // references Tier.name
+  message     String?
+  invitedBy   String?
+  acceptedAt  DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([email])
+  @@index([token])
+  @@map("invitations")
+}
+
+// ─── Webhooks ────────────────────────────────────────
+
+model WebhookRegistration {
+  id        String   @id @default(cuid())
+  event     String
+  url       String
+  secret    String
+  filters   Json?
+  active    Boolean  @default(true)
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  deliveries WebhookDelivery[]
+
+  @@index([event])
+  @@map("webhook_registrations")
+}
+
+model WebhookDelivery {
+  id             String   @id @default(cuid())
+  registrationId String
+  event          String
+  payload        Json
+  statusCode     Int?
+  response       String?
+  attempts       Int      @default(0)
+  lastAttemptAt  DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime @default(now())
+
+  registration WebhookRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@index([registrationId])
+  @@index([createdAt])
+  @@map("webhook_deliveries")
+}
+
+// ─── Ideas ───────────────────────────────────────────
+
+enum IdeaStatus {
+  new
+  reviewing
+  planned
+  shipped
+  declined
+}
+
+model Idea {
+  id          String     @id @default(cuid())
+  title       String
+  description String
+  status      IdeaStatus @default(new)
+  authorId    String?
+  adminNote   String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  author User? @relation(fields: [authorId], references: [id])
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("ideas")
+}
+
+// ─── Feedback ────────────────────────────────────────
+
+model Feedback {
+  id        String   @id @default(cuid())
+  slug      String
+  helpful   Boolean
+  comment   String   @default("")
+  userId    String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([slug])
+  @@index([createdAt])
+  @@map("feedback")
+}
